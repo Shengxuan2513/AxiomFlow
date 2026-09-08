@@ -273,22 +273,26 @@
             <label style="font-size: 12px; font-weight: 600; color: #94a3b8;">⚡ 一键切换服务商预设</label>
             <span style="font-size: 10.5px; color: #38bdf8;">点击即自动配齐模型与接口</span>
           </div>
-          <div class="provider-presets-grid" style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px;">
+          <div class="provider-presets-grid" style="display: grid; grid-template-columns: repeat(6, 1fr); gap: 5px;">
             <button type="button" class="btn-preset-provider" data-provider="siliconflow" title="硅基流动：DeepSeek-V4 Pro / R1 + Qwen2.5-VL-72B">
               <span class="preset-flag">🇨🇳</span>
               <span class="preset-name">硅基流动</span>
-            </button>
-            <button type="button" class="btn-preset-provider" data-provider="dashscope" title="阿里百炼：Qwen3.8-Max + Qwen-VL-Max">
-              <span class="preset-flag">🇨🇳</span>
-              <span class="preset-name">阿里百炼</span>
             </button>
             <button type="button" class="btn-preset-provider" data-provider="deepseek" title="DeepSeek 官方：deepseek-chat / deepseek-reasoner">
               <span class="preset-flag">🇨🇳</span>
               <span class="preset-name">DeepSeek</span>
             </button>
-            <button type="button" class="btn-preset-provider" data-provider="localproxy" title="本地 Antigravity 代理：Gemini 3.8 / Claude 3.5 / GPT-4o">
+            <button type="button" class="btn-preset-provider" data-provider="dashscope" title="阿里百炼：Qwen3.8-Max + Qwen-VL-Max">
+              <span class="preset-flag">🇨🇳</span>
+              <span class="preset-name">阿里百炼</span>
+            </button>
+            <button type="button" class="btn-preset-provider" data-provider="custom_proxy" title="自定义中转 / 反代：支持各类 OpenAI 兼容第三方反代中转 API">
               <span class="preset-flag">🌐</span>
-              <span class="preset-name">本地反代</span>
+              <span class="preset-name">中转反代</span>
+            </button>
+            <button type="button" class="btn-preset-provider" data-provider="oneapi" title="本地网关：OneAPI / NewAPI / 本地网关 (默认端口 3000)">
+              <span class="preset-flag">🌐</span>
+              <span class="preset-name">本地网关</span>
             </button>
             <button type="button" class="btn-preset-provider" data-provider="openai" title="OpenAI 官方：GPT-4o / o1 / o3-mini">
               <span class="preset-flag">🌐</span>
@@ -308,7 +312,7 @@
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px;">
           <div>
             <label style="font-size: 12px; font-weight: 600; color: #94a3b8; display: block; margin-bottom: 4px;">接口基址 (API Base)</label>
-            <input id="cfg-api-base" type="text" class="inquiry-textarea" style="height: 38px; resize: none; font-size: 12px;" value="https://api.siliconflow.cn/v1">
+            <input id="cfg-api-base" type="text" class="inquiry-textarea" style="height: 38px; resize: none; font-size: 12px;" value="https://api.siliconflow.cn/v1" placeholder="例如: https://api.yourproxy.com/v1">
           </div>
           <div>
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
@@ -404,6 +408,52 @@
           <div style="display: flex; gap: 8px;">
             <button id="btn-cancel-settings" class="btn">取消</button>
             <button id="btn-save-settings" class="btn btn-primary" style="padding: 7px 18px;">保存并应用配置</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 引擎连接异常诊断与自愈向导弹窗 -->
+  <div id="engine-diag-modal" class="modal-backdrop" style="display: none; z-index: 10000;">
+    <div class="modal-card" style="width: 540px; max-width: 95vw;">
+      <div class="modal-header" style="border-bottom: 1px solid var(--border-color); padding: 14px 18px; display: flex; align-items: center; justify-content: space-between;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 20px;">🔧</span>
+          <div>
+            <h3 id="diag-modal-title" style="font-size: 15px; font-weight: 600; color: #f87171; margin: 0;">大模型引擎连接诊断</h3>
+            <p id="diag-modal-subtitle" style="font-size: 11px; color: var(--text-secondary); margin-top: 2px;">检测到反向代理或模型接口通信异常</p>
+          </div>
+        </div>
+        <button id="btn-close-diag-modal" class="modal-close-btn" title="关闭诊断">✕</button>
+      </div>
+      <div class="modal-body" style="padding: 18px 20px;">
+        <div id="diag-error-summary" style="background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 6px; padding: 10px 14px; margin-bottom: 14px; color: #fca5a5; font-size: 12.5px; line-height: 1.5; font-weight: 500;">
+        </div>
+
+        <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid var(--border-color); border-radius: 6px; padding: 10px 14px; margin-bottom: 14px; font-size: 12px;">
+          <div style="color: var(--text-secondary); margin-bottom: 4px; font-weight: 600;">📌 请求参数快照：</div>
+          <div style="display: flex; flex-direction: column; gap: 4px; font-family: monospace; font-size: 11.5px;">
+            <div>接口基址: <span id="diag-current-api-base" style="color: #38bdf8; word-break: break-all;"></span></div>
+            <div>指定模型: <span id="diag-current-model" style="color: #34d399;"></span></div>
+          </div>
+        </div>
+
+        <div style="margin-bottom: 16px;">
+          <div style="font-size: 12px; font-weight: 600; color: var(--text-primary); margin-bottom: 6px;">💡 智能排查建议：</div>
+          <ul id="diag-suggestions-list" style="margin: 0; padding-left: 18px; font-size: 12px; color: var(--text-secondary); line-height: 1.6;">
+          </ul>
+        </div>
+
+        <div style="display: flex; justify-content: space-between; align-items: center; gap: 10px; border-top: 1px solid var(--border-color); padding-top: 14px;">
+          <button type="button" id="btn-diag-quick-siliconflow" class="btn" style="font-size: 11.5px; background: rgba(56, 189, 248, 0.1); border-color: rgba(56, 189, 248, 0.3); color: #38bdf8;" title="若反代不可用，可一键切换为国内极速免费的硅基流动">
+            🇨🇳 切换为硅基流动预设
+          </button>
+          <div style="display: flex; gap: 8px;">
+            <button type="button" id="btn-diag-close" class="btn">关闭</button>
+            <button type="button" id="btn-diag-open-config" class="btn btn-primary" style="padding: 7px 16px; font-size: 12px;">
+              ⚙️ 立即前往配置并测试
+            </button>
           </div>
         </div>
       </div>

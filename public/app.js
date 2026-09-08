@@ -727,13 +727,26 @@ async function generateAnswerForNode(node) {
       if (data.mtime) lastMtime = data.mtime;
       updateStatus(`[完成] ${currentConfig.model} 已为 #${node.id} 生成解答`);
     } else {
-      alert("生成失败: " + (data.error || "未知异常"));
+      showEngineDiagnosticModal(data);
       liveNode.status = 'idle';
+      updateStatus(`❌ 推演失败: ${data.error || '未知异常'}`);
     }
   } catch (err) {
-    alert("网络异常: " + err.message);
+    showEngineDiagnosticModal({
+      ok: false,
+      error_type: 'network_error',
+      error: `前端网络请求中断: ${err.message}`,
+      api_base: currentConfig.api_base,
+      model: currentConfig.model,
+      diagnostics: [
+        "请检查本地 AxiomFlow 服务 (http://localhost:8765) 是否正常运行",
+        "检查浏览器是否安装了阻止本地请求的网络插件"
+      ]
+    });
     const liveNode = graph.nodes.find(n => n.id === node.id) || node;
     liveNode.status = 'idle';
+    updateStatus(`❌ 网络异常: ${err.message}`);
+  } finally {
   } finally {
     saveGraph();
     renderNodes();
@@ -2089,6 +2102,7 @@ async function transcribeFormula(nodeOrId, imageUrl, citation) {
         renderNodes();
         if (selectedNodeId === nodeId) updateContextInspector();
         updateStatus(`⚠️ 公式反编译未完成: ${data.error || '未能识别有效内容'}`);
+        showEngineDiagnosticModal(data);
       }
     }
   } catch (err) {
@@ -2101,6 +2115,17 @@ async function transcribeFormula(nodeOrId, imageUrl, citation) {
       if (selectedNodeId === nodeId) updateContextInspector();
     }
     updateStatus(`⚠️ 网络连接或调用异常: ${err.message}`);
+    showEngineDiagnosticModal({
+      ok: false,
+      error_type: 'network_error',
+      error: `视觉多模态接口网络请求异常: ${err.message}`,
+      api_base: currentConfig.api_base,
+      model: currentConfig.vision_model || currentConfig.model,
+      diagnostics: [
+        "请检查当前服务商是否支持多模态视觉模型",
+        "可前往【⚙️ 引擎配置】选择【Qwen2.5-VL-72B】或【Gemini 3.8 Flash】视觉引擎"
+      ]
+    });
   }
 }
 
@@ -2561,16 +2586,6 @@ function setupEventListeners() {
       linkUrl: 'https://cloud.siliconflow.cn/account/ak',
       defaultKey: ''
     },
-    dashscope: {
-      name: '阿里百炼',
-      api_base: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-      model: 'qwen3.8-max',
-      vision_model: 'qwen-vl-max',
-      hint: '服务商：阿里百炼 · 适用 Qwen3.8-Max (推理) + qwen-vl-max (视觉)',
-      linkText: 'bailian.console.aliyun.com ↗',
-      linkUrl: 'https://bailian.console.aliyun.com/?apiKey=1',
-      defaultKey: ''
-    },
     deepseek: {
       name: 'DeepSeek 官方',
       api_base: 'https://api.deepseek.com/v1',
@@ -2581,15 +2596,35 @@ function setupEventListeners() {
       linkUrl: 'https://platform.deepseek.com/api_keys',
       defaultKey: ''
     },
-    localproxy: {
-      name: '本地反代',
-      api_base: 'http://127.0.0.1:8046/v1',
-      model: 'gemini-3.8-flash-high',
-      vision_model: 'gemini-3.8-flash-high',
-      hint: '服务商：本地 Antigravity 代理 · 走本地端口，无需配置第三方 Key',
+    dashscope: {
+      name: '阿里百炼',
+      api_base: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+      model: 'qwen3.8-max',
+      vision_model: 'qwen-vl-max',
+      hint: '服务商：阿里百炼 · 适用 Qwen3.8-Max (推理) + qwen-vl-max (视觉)',
+      linkText: 'bailian.console.aliyun.com ↗',
+      linkUrl: 'https://bailian.console.aliyun.com/?apiKey=1',
+      defaultKey: ''
+    },
+    custom_proxy: {
+      name: '中转反代',
+      api_base: 'https://api.openai-proxy.org/v1',
+      model: 'deepseek-chat',
+      vision_model: 'gpt-4o',
+      hint: '服务商：自定义反代/中转站 · 支持任意 OpenAI 兼容云端中转 API',
+      linkText: '反代配置指南 ↗',
+      linkUrl: 'https://github.com/Shengxuan2513/AxiomFlow',
+      defaultKey: ''
+    },
+    oneapi: {
+      name: '本地网关',
+      api_base: 'http://127.0.0.1:3000/v1',
+      model: 'gpt-4o',
+      vision_model: 'gpt-4o',
+      hint: '服务商：本地 OneAPI / NewAPI / 本地网关 (默认端口 3000)',
       linkText: '',
       linkUrl: '#',
-      defaultKey: 'sk-antigravity'
+      defaultKey: ''
     },
     openai: {
       name: 'OpenAI 官方',
@@ -2651,20 +2686,131 @@ function setupEventListeners() {
     if (hintLink) {
       hintLink.innerText = preset.linkText;
       hintLink.href = preset.linkUrl;
-      hintLink.style.display = preset.linkUrl === '#' ? 'none' : 'inline-flex';
+      hintLink.style.display = preset.linkUrl === '#' || !preset.linkUrl ? 'none' : 'inline-flex';
     }
     if (keyStatus) {
-      if (pKey === 'localproxy') {
-        keyStatus.innerText = '免配 Key (自动就绪)';
-        keyStatus.style.color = '#38bdf8';
+      const savedKeys = getSavedProviderKeys();
+      const currentInputKey = (document.getElementById('cfg-api-key')?.value || '').trim();
+      const hasKey = !!(savedKeys[pKey] || currentInputKey || (currentConfig.api_key && currentConfig.api_base?.includes(pKey)));
+      keyStatus.innerText = hasKey ? '已记忆本地私钥 ✓' : '请粘贴 Key';
+      keyStatus.style.color = hasKey ? '#10b981' : '#f59e0b';
+    }
+  }
+
+  // 客户端 URL 自动规范化
+  function sanitizeClientApiBase(url) {
+    if (!url) return '';
+    let clean = url.trim();
+    if (!clean.startsWith('http://') && !clean.startsWith('https://')) {
+      if (clean.includes('127.0.0.1') || clean.includes('localhost')) {
+        clean = 'http://' + clean;
       } else {
-        const savedKeys = getSavedProviderKeys();
-        const currentInputKey = (document.getElementById('cfg-api-key')?.value || '').trim();
-        const hasKey = !!(savedKeys[pKey] || currentInputKey || (currentConfig.api_key && currentConfig.api_base?.includes(pKey)));
-        keyStatus.innerText = hasKey ? '已记忆本地私钥 ✓' : '请粘贴 Key';
-        keyStatus.style.color = hasKey ? '#10b981' : '#f59e0b';
+        clean = 'https://' + clean;
       }
     }
+    clean = clean.replace(/\/chat\/completions\/?$/, '');
+    clean = clean.replace(/\/models\/?$/, '');
+    clean = clean.replace(/\/+$/, '');
+    try {
+      const u = new URL(clean);
+      if (u.pathname === '' || u.pathname === '/') {
+        clean = clean + '/v1';
+      }
+    } catch(e) {}
+    return clean;
+  }
+
+  // 引擎连接异常与自愈诊断弹窗
+  window.showEngineDiagnosticModal = (diagData = {}) => {
+    const modal = document.getElementById('engine-diag-modal');
+    if (!modal) {
+      alert(diagData.error || '大模型请求异常');
+      return;
+    }
+    
+    const titleEl = document.getElementById('diag-modal-title');
+    const summaryEl = document.getElementById('diag-error-summary');
+    const apiBaseEl = document.getElementById('diag-current-api-base');
+    const modelEl = document.getElementById('diag-current-model');
+    const listEl = document.getElementById('diag-suggestions-list');
+    
+    const errorMsg = diagData.error || '无法与大模型服务商或反代建立有效连接';
+    const apiBase = diagData.api_base || currentConfig.api_base || '未设置';
+    const model = diagData.model || currentConfig.model || '未指定';
+    const diagnostics = diagData.diagnostics || [];
+    
+    if (titleEl) {
+      if (diagData.error_type === 'connection_refused') {
+        titleEl.innerText = '🔧 反代或本地服务连接被拒绝 (10061)';
+      } else if (diagData.error_type === 'auth_failed') {
+        titleEl.innerText = '🔑 API Key 认证失败 (401)';
+      } else if (diagData.error_type === 'model_not_found') {
+        titleEl.innerText = '🔍 模型未找到或反代未路由 (404)';
+      } else if (diagData.error_type === 'timeout') {
+        titleEl.innerText = '⏱️ 反代服务器响应超时';
+      } else {
+        titleEl.innerText = '⚠️ 大模型推演引擎连接异常';
+      }
+    }
+    
+    if (summaryEl) {
+      summaryEl.innerHTML = `<strong>⚠️ 异常信息：</strong>${errorMsg}`;
+    }
+    
+    if (apiBaseEl) apiBaseEl.innerText = apiBase;
+    if (modelEl) modelEl.innerText = model;
+    
+    if (listEl) {
+      listEl.innerHTML = '';
+      const items = diagnostics.length > 0 ? diagnostics : [
+        '请检查右上角【⚙️ 引擎配置】中的 API Base 接口地址与 API Key 是否正确；',
+        '若使用在线反代/中转站，请核对地址（如 https://api.xxx.com/v1）并确保带上 /v1；',
+        '若使用本地 OneAPI / 代理软件，请确认本地服务已启动且端口号一致。'
+      ];
+      items.forEach(d => {
+        const li = document.createElement('li');
+        li.style.marginBottom = '4px';
+        li.innerText = d;
+        listEl.appendChild(li);
+      });
+    }
+    
+    modal.style.display = 'flex';
+  };
+
+  window.closeEngineDiagnosticModal = () => {
+    const modal = document.getElementById('engine-diag-modal');
+    if (modal) modal.style.display = 'none';
+  };
+
+  // 绑定诊断弹窗按钮事件
+  const btnCloseDiag = document.getElementById('btn-close-diag-modal');
+  const btnDiagClose = document.getElementById('btn-diag-close');
+  const btnDiagOpenConfig = document.getElementById('btn-diag-open-config');
+  const btnDiagQuickSilicon = document.getElementById('btn-diag-quick-siliconflow');
+
+  if (btnCloseDiag) btnCloseDiag.onclick = window.closeEngineDiagnosticModal;
+  if (btnDiagClose) btnDiagClose.onclick = window.closeEngineDiagnosticModal;
+  if (btnDiagOpenConfig) {
+    btnDiagOpenConfig.onclick = () => {
+      window.closeEngineDiagnosticModal();
+      openSettingsHandler();
+      setTimeout(() => {
+        const baseInput = document.getElementById('cfg-api-base');
+        if (baseInput) {
+          baseInput.focus();
+          baseInput.select();
+        }
+      }, 100);
+    };
+  }
+  if (btnDiagQuickSilicon) {
+    btnDiagQuickSilicon.onclick = () => {
+      window.closeEngineDiagnosticModal();
+      openSettingsHandler();
+      const sBtn = document.querySelector('.btn-preset-provider[data-provider="siliconflow"]');
+      if (sBtn) sBtn.click();
+    };
   }
 
   // 服务商快捷预设按钮点击
@@ -2683,8 +2829,8 @@ function setupEventListeners() {
       if (apiKeyInput) {
         if (savedKeys[pKey]) {
           apiKeyInput.value = savedKeys[pKey];
-        } else if (pKey === 'localproxy') {
-          apiKeyInput.value = 'sk-antigravity';
+        } else if (preset.defaultKey) {
+          apiKeyInput.value = preset.defaultKey;
         } else {
           apiKeyInput.value = '';
         }
@@ -2725,6 +2871,18 @@ function setupEventListeners() {
       updateProviderHintBar(pKey);
     };
   });
+
+  // API Base 输入框失焦时自动规范化
+  const cfgApiBaseInput = document.getElementById('cfg-api-base');
+  if (cfgApiBaseInput) {
+    cfgApiBaseInput.onblur = () => {
+      const sanitized = sanitizeClientApiBase(cfgApiBaseInput.value);
+      if (sanitized && sanitized !== cfgApiBaseInput.value) {
+        cfgApiBaseInput.value = sanitized;
+      }
+      updatePresetButtonsState(cfgApiBaseInput.value);
+    };
+  }
 
   // 主模型下拉选择与自定义输入框联动
   const modelSelectEl = document.getElementById('cfg-model-select');
@@ -2841,8 +2999,8 @@ function setupEventListeners() {
         apiKeyInput.value = savedKeys[matchedPKey];
       } else if (currentConfig.api_key && currentConfig.api_key !== 'sk-antigravity') {
         apiKeyInput.value = currentConfig.api_key;
-      } else if (matchedPKey === 'localproxy') {
-        apiKeyInput.value = 'sk-antigravity';
+      } else if (PROVIDER_PRESETS[matchedPKey]?.defaultKey) {
+        apiKeyInput.value = PROVIDER_PRESETS[matchedPKey].defaultKey;
       } else {
         apiKeyInput.value = '';
       }
